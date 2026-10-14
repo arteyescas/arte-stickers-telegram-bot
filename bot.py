@@ -125,22 +125,21 @@ def process_video_and_send_sticker(chat_id, url, status_msg):
                 caption="Here is your animated file! 👆\n\nSave this file to your computer and upload it using the '+' -> 'New Sticker' button on WhatsApp Web."
             )
 
-class DummyHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-type", "text/plain")
-        self.end_headers()
-        self.wfile.write(b"Bot is alive and listening on Telegram!")
-    
-    def log_message(self, format, *args):
-        pass
+from flask import Flask
+
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is alive and healthy on Telegram!", 200
 
 def start_bot():
     print("🤖 Attempting to connect to Telegram...")
     try:
-        bot.infinity_polling()
+        # Added timeouts to make polling more resilient to cloud network drops
+        bot.infinity_polling(timeout=10, long_polling_timeout=5)
     except Exception as e:
-        print(f"🚨 Bot polling crashed (This is usually a bad Token): {e}")
+        print(f"🚨 Bot polling crashed: {e}")
 
 if __name__ == "__main__":
     print("🚀 Starting application...")
@@ -149,12 +148,13 @@ if __name__ == "__main__":
     bot_thread = threading.Thread(target=start_bot, daemon=True)
     bot_thread.start()
     
-    # 2. Start the web server safely on the main thread
+    # 2. Start the Flask web server safely on the main thread
     try:
-        port = int(os.getenv('PORT', 10000))
-        print(f"🌐 Binding web server to 0.0.0.0 on port {port}...")
-        server = HTTPServer(('0.0.0.0', port), DummyHandler)
-        print("✅ Web server successfully running! Render should mark this as LIVE.")
-        server.serve_forever()
+        # Bulletproof port fetching (prevents crashes if Render sends weird data)
+        port_str = os.environ.get('PORT', '10000')
+        port = int(port_str) if port_str.isdigit() else 10000
+        
+        print(f"🌐 Binding Flask web server to 0.0.0.0 on port {port}...")
+        app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
     except Exception as e:
         print(f"🚨 FATAL ERROR: Web server failed to start: {e}")
