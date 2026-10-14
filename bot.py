@@ -97,16 +97,17 @@ def process_video(chat_id, url, status_msg):
         duration = "3" 
         ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe() 
         
+        # We lower the framerate to 12fps and increase compression to ensure we stay under WhatsApp's 500KB limit
         ffmpeg_cmd = [
             ffmpeg_exe,
             '-y', 
             '-t', duration,
             '-i', input_file,
-            '-vf', 'format=rgba,scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=black@0.0,fps=15',
+            '-vf', 'fps=12,scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=black@0.0',
             '-c:v', 'libwebp',
             '-lossless', '0',
-            '-compression_level', '4',
-            '-q:v', '30',
+            '-compression_level', '6',
+            '-q:v', '15',
             '-loop', '0',
             '-an',
             sticker_path
@@ -119,6 +120,12 @@ def process_video(chat_id, url, status_msg):
                                   chat_id=chat_id, message_id=status_msg.message_id)
             return
 
+        # Check the final file size
+        file_size_kb = os.path.getsize(sticker_path) / 1024
+        size_warning = ""
+        if file_size_kb > 500:
+            size_warning = f"\n\n⚠️ Note: The file is {int(file_size_kb)}KB. WhatsApp might freeze the animation because it is over their 500KB limit."
+
         bot.edit_message_text("✅ Done! Sending your animated file...", 
                               chat_id=chat_id, message_id=status_msg.message_id)
         
@@ -127,7 +134,7 @@ def process_video(chat_id, url, status_msg):
             bot.send_document(
                 chat_id, 
                 sticker_file,
-                caption="Here is your animated file! 👆\n\nSave this file to your computer and upload it using the '+' -> 'New Sticker' button on WhatsApp Web."
+                caption=f"Here is your animated file! 👆\n\nSave this file to your computer and upload it using the '+' -> 'New Sticker' button on WhatsApp Web.{size_warning}"
             )
 
 def start_bot():
@@ -140,11 +147,9 @@ def start_bot():
 if __name__ == "__main__":
     print("🚀 Starting application...")
     
-    # Start the bot in the background
     bot_thread = threading.Thread(target=start_bot, daemon=True)
     bot_thread.start()
     
-    # Start the web server in the foreground to satisfy Render
     port = int(os.environ.get('PORT', 10000))
     print(f"🌐 Binding Flask web server to 0.0.0.0 on port {port}...")
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
