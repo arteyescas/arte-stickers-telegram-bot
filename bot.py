@@ -129,17 +129,23 @@ class DummyHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"Bot is alive and listening on Telegram!")
     
     def log_message(self, format, *args):
+        # Silence the web server logs to keep the console clean
         pass
 
-def keep_alive():
-    port = int(os.getenv('PORT', 8080))
-    server = HTTPServer(('0.0.0.0', port), DummyHandler)
-    print(f"Fake web server listening on port {port}...")
-    server.serve_forever()
+def start_bot():
+    print("Starting Telegram bot polling...")
+    try:
+        bot.infinity_polling()
+    except Exception as e:
+        print(f"Bot polling crashed: {e}")
 
 if __name__ == "__main__":
-    print("Starting bot in the background...")
-    threading.Thread(target=bot.infinity_polling, daemon=True).start()
+    # 1. Start the bot in the background thread FIRST
+    bot_thread = threading.Thread(target=start_bot, daemon=True)
+    bot_thread.start()
     
-    print("Starting web server to satisfy Render...")
-    keep_alive()
+    # 2. Start the web server on the MAIN thread to satisfy Render
+    port = int(os.getenv('PORT', 10000)) # Render defaults to 10000 if not set
+    print(f"Starting web server on 0.0.0.0:{port} to satisfy Render...")
+    server = HTTPServer(('0.0.0.0', port), DummyHandler)
+    server.serve_forever()
