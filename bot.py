@@ -7,14 +7,23 @@ import tempfile
 import glob
 import subprocess
 import threading
+import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
+
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
 
 import telebot
 import yt_dlp
 import imageio_ffmpeg # The portable FFmpeg library
 
-# Fetch the token from environment variables
 BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+
+if not BOT_TOKEN:
+    print("🚨 CRITICAL ERROR: TELEGRAM_BOT_TOKEN is missing!")
+    print("🚨 Please go to your Render Dashboard -> Environment -> Add Environment Variable.")
+    # We feed it a fake token so the script doesn't crash, allowing the web server to start!
+    BOT_TOKEN = "123456789:DUMMY_TOKEN_TO_PREVENT_FATAL_CRASH"
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -51,7 +60,6 @@ def process_video_and_send_sticker(chat_id, url, status_msg):
 
     with tempfile.TemporaryDirectory() as temp_dir:
         
-        # 1. DOWNLOAD THE VIDEO
         ydl_opts = {
             'outtmpl': os.path.join(temp_dir, 'video.%(ext)s'),
             'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
@@ -65,7 +73,7 @@ def process_video_and_send_sticker(chat_id, url, status_msg):
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
         except Exception as e:
-            bot.edit_message_text(f"❌ Failed to download video. Ensure the post is public.\nError: {str(e)}", 
+            bot.edit_message_text(f"❌ Failed to download video.\nError: {str(e)}", 
                                   chat_id=chat_id, message_id=status_msg.message_id)
             return
 
@@ -81,9 +89,8 @@ def process_video_and_send_sticker(chat_id, url, status_msg):
         bot.edit_message_text("⚙️ Converting to animated sticker format...", 
                               chat_id=chat_id, message_id=status_msg.message_id)
 
-        # 2. CONVERT TO WEBP VIA PORTABLE FFMPEG
         duration = "3" 
-        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe() # Get the path to the portable FFmpeg
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe() 
         
         ffmpeg_cmd = [
             ffmpeg_exe,
@@ -108,19 +115,16 @@ def process_video_and_send_sticker(chat_id, url, status_msg):
                                   chat_id=chat_id, message_id=status_msg.message_id)
             return
 
-        # 3. SEND THE STICKER AS A DOCUMENT
         bot.edit_message_text("✅ Done! Sending your animated file...", 
                               chat_id=chat_id, message_id=status_msg.message_id)
         
         with open(sticker_path, 'rb') as sticker_file:
-            # Send as document so Telegram doesn't freeze the animation!
             bot.send_document(
                 chat_id, 
                 sticker_file,
                 caption="Here is your animated file! 👆\n\nSave this file to your computer and upload it using the '+' -> 'New Sticker' button on WhatsApp Web."
             )
 
-# --- DUMMY WEB SERVER ---
 class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -129,23 +133,28 @@ class DummyHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"Bot is alive and listening on Telegram!")
     
     def log_message(self, format, *args):
-        # Silence the web server logs to keep the console clean
         pass
 
 def start_bot():
-    print("Starting Telegram bot polling...")
+    print("🤖 Attempting to connect to Telegram...")
     try:
         bot.infinity_polling()
     except Exception as e:
-        print(f"Bot polling crashed: {e}")
+        print(f"🚨 Bot polling crashed (This is usually a bad Token): {e}")
 
 if __name__ == "__main__":
-    # 1. Start the bot in the background thread FIRST
+    print("🚀 Starting application...")
+    
+    # 1. Start the bot on a background thread
     bot_thread = threading.Thread(target=start_bot, daemon=True)
     bot_thread.start()
     
-    # 2. Start the web server on the MAIN thread to satisfy Render
-    port = int(os.getenv('PORT', 10000)) # Render defaults to 10000 if not set
-    print(f"Starting web server on 0.0.0.0:{port} to satisfy Render...")
-    server = HTTPServer(('0.0.0.0', port), DummyHandler)
-    server.serve_forever()
+    # 2. Start the web server safely on the main thread
+    try:
+        port = int(os.getenv('PORT', 10000))
+        print(f"🌐 Binding web server to 0.0.0.0 on port {port}...")
+        server = HTTPServer(('0.0.0.0', port), DummyHandler)
+        print("✅ Web server successfully running! Render should mark this as LIVE.")
+        server.serve_forever()
+    except Exception as e:
+        print(f"🚨 FATAL ERROR: Web server failed to start: {e}")
