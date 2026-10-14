@@ -55,6 +55,12 @@ def handle_message(message):
         bot.edit_message_text(f"❌ An error occurred: {str(e)}", chat_id=message.chat.id, message_id=status_msg.message_id)
 
 def process_video_and_send_sticker(chat_id, url, status_msg):
+    # Clean the URL to prevent downloading comments/threads
+    # Remove tracking parameters and convert x.com to twitter.com
+    if "?" in url:
+        url = url.split("?")[0]
+    url = url.replace("https://x.com/", "https://twitter.com/")
+
     # Create a temporary directory that automatically cleans up after itself
     with tempfile.TemporaryDirectory() as temp_dir:
         
@@ -63,6 +69,7 @@ def process_video_and_send_sticker(chat_id, url, status_msg):
             'outtmpl': os.path.join(temp_dir, 'video.%(ext)s'),
             'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
             'noplaylist': True,
+            'playlist_items': '1',  # Force yt-dlp to ONLY grab the first video
             'quiet': True,
             'no_warnings': True
         }
@@ -117,21 +124,21 @@ def process_video_and_send_sticker(chat_id, url, status_msg):
             return
 
         # 3. SEND THE STICKER TO THE USER
-        bot.edit_message_text("✅ Done! Sending your sticker...", 
+        bot.edit_message_text("✅ Done! Sending your animated file...", 
                               chat_id=chat_id, message_id=status_msg.message_id)
         
         with open(sticker_path, 'rb') as sticker_file:
-            bot.send_sticker(chat_id, sticker_file)
+            # We MUST send as a document. If we use send_sticker, Telegram freezes .webp files into static images!
+            bot.send_document(
+                chat_id, 
+                sticker_file,
+                caption="Here is your animated file! 👆\n\nSave this file to your computer and upload it using the '+' -> 'New Sticker' button on WhatsApp Web."
+            )
             
         # Optional: delete the status message entirely once done
         # bot.delete_message(chat_id, status_msg.message_id)
 
-if __name__ == "__main__":
-    # --- RENDER FREE TIER DUMMY SERVER ---
-    # Render requires free services to act like a website and bind to a port.
-    # This tiny server runs in the background just to keep Render happy.
-    class DummyHandler(BaseHTTPRequestHandler):
-        def do_GET(self):
+    if __name__ == "__main__":
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"Bot is alive and listening on Telegram!")
