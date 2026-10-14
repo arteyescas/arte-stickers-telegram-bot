@@ -1,32 +1,37 @@
-"""
-Telegram Bot to convert Video URLs (Instagram, Twitter, etc.) to Animated Stickers.
-"""
-
 import os
 import tempfile
 import glob
 import subprocess
 import threading
 import sys
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import telebot
+import yt_dlp
+import imageio_ffmpeg
+from flask import Flask
 
+# 1. Force logs to print instantly
 sys.stdout.reconfigure(line_buffering=True)
 sys.stderr.reconfigure(line_buffering=True)
 
-import telebot
-import yt_dlp
-import imageio_ffmpeg # The portable FFmpeg library
-
+# 2. Safely grab the Bot Token
 BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-
 if not BOT_TOKEN:
-    print("🚨 CRITICAL ERROR: TELEGRAM_BOT_TOKEN is missing!")
-    print("🚨 Please go to your Render Dashboard -> Environment -> Add Environment Variable.")
-    # We feed it a fake token so the script doesn't crash, allowing the web server to start!
+    print("🚨 WARNING: TELEGRAM_BOT_TOKEN is missing!")
     BOT_TOKEN = "123456789:DUMMY_TOKEN_TO_PREVENT_FATAL_CRASH"
 
 bot = telebot.TeleBot(BOT_TOKEN)
+app = Flask(__name__)
 
+# 3. Dummy Web Routes to pass Render's Health Check
+@app.route('/')
+def home():
+    return "Bot is alive and running!", 200
+
+@app.route('/health')
+def health():
+    return "OK", 200
+
+# 4. Telegram Bot Logic
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     welcome_text = (
@@ -48,12 +53,12 @@ def handle_message(message):
     status_msg = bot.reply_to(message, "⏳ Downloading video... (This might take a moment)")
 
     try:
-        process_video_and_send_sticker(message.chat.id, url, status_msg)
+        process_video(message.chat.id, url, status_msg)
     except Exception as e:
         bot.edit_message_text(f"❌ An error occurred: {str(e)}", chat_id=message.chat.id, message_id=status_msg.message_id)
 
-def process_video_and_send_sticker(chat_id, url, status_msg):
-    # Clean the URL to prevent downloading comments/threads
+def process_video(chat_id, url, status_msg):
+    # Clean the URL
     if "?" in url:
         url = url.split("?")[0]
     url = url.replace("https://x.com/", "https://twitter.com/")
@@ -86,7 +91,7 @@ def process_video_and_send_sticker(chat_id, url, status_msg):
         input_file = files[0]
         sticker_path = os.path.join(temp_dir, 'sticker.webp')
 
-        bot.edit_message_text("⚙️ Converting to animated sticker format...", 
+        bot.edit_message_text("⚙️ Converting to animated WebP format...", 
                               chat_id=chat_id, message_id=status_msg.message_id)
 
         duration = "3" 
@@ -110,14 +115,14 @@ def process_video_and_send_sticker(chat_id, url, status_msg):
         try:
             subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         except subprocess.CalledProcessError as e:
-            error_details = e.stderr.decode('utf-8', errors='ignore')
-            bot.edit_message_text(f"❌ FFmpeg conversion failed.\nError: {error_details[:500]}", 
+            bot.edit_message_text("❌ FFmpeg conversion failed.", 
                                   chat_id=chat_id, message_id=status_msg.message_id)
             return
 
         bot.edit_message_text("✅ Done! Sending your animated file...", 
                               chat_id=chat_id, message_id=status_msg.message_id)
         
+        # Send as a DOCUMENT to prevent Telegram from freezing the animation
         with open(sticker_path, 'rb') as sticker_file:
             bot.send_document(
                 chat_id, 
@@ -125,18 +130,9 @@ def process_video_and_send_sticker(chat_id, url, status_msg):
                 caption="Here is your animated file! 👆\n\nSave this file to your computer and upload it using the '+' -> 'New Sticker' button on WhatsApp Web."
             )
 
-from flask import Flask
-
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "Bot is alive and healthy on Telegram!", 200
-
 def start_bot():
     print("🤖 Attempting to connect to Telegram...")
     try:
-        # Added timeouts to make polling more resilient to cloud network drops
         bot.infinity_polling(timeout=10, long_polling_timeout=5)
     except Exception as e:
         print(f"🚨 Bot polling crashed: {e}")
@@ -144,17 +140,11 @@ def start_bot():
 if __name__ == "__main__":
     print("🚀 Starting application...")
     
-    # 1. Start the bot on a background thread
+    # Start the bot in the background
     bot_thread = threading.Thread(target=start_bot, daemon=True)
     bot_thread.start()
     
-    # 2. Start the Flask web server safely on the main thread
-    try:
-        # Bulletproof port fetching (prevents crashes if Render sends weird data)
-        port_str = os.environ.get('PORT', '10000')
-        port = int(port_str) if port_str.isdigit() else 10000
-        
-        print(f"🌐 Binding Flask web server to 0.0.0.0 on port {port}...")
-        app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
-    except Exception as e:
-        print(f"🚨 FATAL ERROR: Web server failed to start: {e}")
+    # Start the web server in the foreground to satisfy Render
+    port = int(os.environ.get('PORT', 10000))
+    print(f"🌐 Binding Flask web server to 0.0.0.0 on port {port}...")
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
