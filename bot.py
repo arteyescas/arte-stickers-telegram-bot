@@ -138,6 +138,8 @@ def keep_alive():
     server.serve_forever()
 
 if __name__ == "__main__":
-    threading.Thread(target=keep_alive, daemon=True).start()
-    print("Bot is starting...")
-    bot.infinity_polling()
+    print("Starting bot in the background...")
+    threading.Thread(target=bot.infinity_polling, daemon=True).start()
+    
+    print("Starting web server to satisfy Render...")
+    keep_alive()
