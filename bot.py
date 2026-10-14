@@ -11,6 +11,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import telebot
 import yt_dlp
+import imageio_ffmpeg # The portable FFmpeg library
 
 # Fetch the token from environment variables
 BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -80,10 +81,12 @@ def process_video_and_send_sticker(chat_id, url, status_msg):
         bot.edit_message_text("⚙️ Converting to animated sticker format...", 
                               chat_id=chat_id, message_id=status_msg.message_id)
 
-        # 2. CONVERT TO WEBP VIA FFMPEG
+        # 2. CONVERT TO WEBP VIA PORTABLE FFMPEG
         duration = "3" 
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe() # Get the path to the portable FFmpeg
+        
         ffmpeg_cmd = [
-            'ffmpeg',
+            ffmpeg_exe,
             '-y', 
             '-t', duration,
             '-i', input_file,
@@ -117,7 +120,7 @@ def process_video_and_send_sticker(chat_id, url, status_msg):
                 caption="Here is your animated file! 👆\n\nSave this file to your computer and upload it using the '+' -> 'New Sticker' button on WhatsApp Web."
             )
 
-# --- DUMMY WEB SERVER (To satisfy Render's Web Service requirements) ---
+# --- DUMMY WEB SERVER ---
 class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -125,7 +128,6 @@ class DummyHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"Bot is alive and listening on Telegram!")
     
-    # Hide standard web server logs from the console to keep it clean
     def log_message(self, format, *args):
         pass
 
@@ -136,8 +138,6 @@ def keep_alive():
     server.serve_forever()
 
 if __name__ == "__main__":
-    # Start the dummy web server in a separate background thread
     threading.Thread(target=keep_alive, daemon=True).start()
-    
     print("Bot is starting...")
     bot.infinity_polling()
