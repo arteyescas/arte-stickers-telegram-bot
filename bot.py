@@ -1,29 +1,19 @@
 """
 Telegram Bot to convert Video URLs (Instagram, Twitter, etc.) to Animated Stickers.
-
-Prerequisites for running locally:
-1. pip install pyTelegramBotAPI yt-dlp
-2. Install FFmpeg on your system (must be in PATH)
-3. Set your TELEGRAM_BOT_TOKEN environment variable.
 """
 
 import os
 import tempfile
 import glob
 import subprocess
-import telebot
-import yt_dlp
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-# Fetch the token from environment variables (Best practice for hosting on Render)
-BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+import telebot
+import yt_dlp
 
-if not BOT_TOKEN:
-    # Fallback for local testing if you don't want to set env variables
-    # Replace 'YOUR_TOKEN_HERE' with your actual bot token from BotFather, 
-    # but never commit your actual token to a public GitHub repo!
-    BOT_TOKEN = 'YOUR_TOKEN_HERE' 
+# Fetch the token from environment variables
+BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -32,7 +22,7 @@ def send_welcome(message):
     welcome_text = (
         "👋 Welcome to the Sticker Maker Bot!\n\n"
         "Send me a link to an Instagram Reel, Twitter/X video, or TikTok.\n"
-        "I will download it, format it, and send it back to you as an animated sticker "
+        "I will download it, format it, and send it back to you as an animated file "
         "that you can save and forward to WhatsApp!"
     )
     bot.reply_to(message, welcome_text)
@@ -41,14 +31,12 @@ def send_welcome(message):
 def handle_message(message):
     url = message.text.strip()
     
-    # Basic check to see if the message contains a link
     if "http://" not in url and "https://" not in url:
         bot.reply_to(message, "Please send a valid URL (link).")
         return
 
     status_msg = bot.reply_to(message, "⏳ Downloading video... (This might take a moment)")
 
-    # Run the processing logic
     try:
         process_video_and_send_sticker(message.chat.id, url, status_msg)
     except Exception as e:
@@ -56,12 +44,10 @@ def handle_message(message):
 
 def process_video_and_send_sticker(chat_id, url, status_msg):
     # Clean the URL to prevent downloading comments/threads
-    # Remove tracking parameters and convert x.com to twitter.com
     if "?" in url:
         url = url.split("?")[0]
     url = url.replace("https://x.com/", "https://twitter.com/")
 
-    # Create a temporary directory that automatically cleans up after itself
     with tempfile.TemporaryDirectory() as temp_dir:
         
         # 1. DOWNLOAD THE VIDEO
@@ -82,7 +68,6 @@ def process_video_and_send_sticker(chat_id, url, status_msg):
                                   chat_id=chat_id, message_id=status_msg.message_id)
             return
 
-        # Locate the downloaded file
         files = glob.glob(os.path.join(temp_dir, 'video.*'))
         if not files:
             bot.edit_message_text("❌ Could not locate the downloaded video.", 
@@ -96,10 +81,7 @@ def process_video_and_send_sticker(chat_id, url, status_msg):
                               chat_id=chat_id, message_id=status_msg.message_id)
 
         # 2. CONVERT TO WEBP VIA FFMPEG
-        # Extract the first 3 seconds (to keep size under 500kb limit)
-        # Scale/Pad to exactly 512x512 with transparent background at 15fps
         duration = "3" 
-        
         ffmpeg_cmd = [
             'ffmpeg',
             '-y', 
@@ -123,35 +105,39 @@ def process_video_and_send_sticker(chat_id, url, status_msg):
                                   chat_id=chat_id, message_id=status_msg.message_id)
             return
 
-        # 3. SEND THE STICKER TO THE USER
+        # 3. SEND THE STICKER AS A DOCUMENT
         bot.edit_message_text("✅ Done! Sending your animated file...", 
                               chat_id=chat_id, message_id=status_msg.message_id)
         
         with open(sticker_path, 'rb') as sticker_file:
-            # We MUST send as a document. If we use send_sticker, Telegram freezes .webp files into static images!
+            # Send as document so Telegram doesn't freeze the animation!
             bot.send_document(
                 chat_id, 
                 sticker_file,
                 caption="Here is your animated file! 👆\n\nSave this file to your computer and upload it using the '+' -> 'New Sticker' button on WhatsApp Web."
             )
-            
-        # Optional: delete the status message entirely once done
-        # bot.delete_message(chat_id, status_msg.message_id)
 
-    if __name__ == "__main__":
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"Bot is alive and listening on Telegram!")
+# --- DUMMY WEB SERVER (To satisfy Render's Web Service requirements) ---
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"Bot is alive and listening on Telegram!")
+    
+    # Hide standard web server logs from the console to keep it clean
+    def log_message(self, format, *args):
+        pass
 
-    def keep_alive():
-        port = int(os.getenv('PORT', 8080))
-        server = HTTPServer(('0.0.0.0', port), DummyHandler)
-        server.serve_forever()
+def keep_alive():
+    port = int(os.getenv('PORT', 8080))
+    server = HTTPServer(('0.0.0.0', port), DummyHandler)
+    print(f"Fake web server listening on port {port}...")
+    server.serve_forever()
 
-    # Start the dummy web server in a separate thread
+if __name__ == "__main__":
+    # Start the dummy web server in a separate background thread
     threading.Thread(target=keep_alive, daemon=True).start()
-    # -------------------------------------
-
+    
     print("Bot is starting...")
-    # infinity_polling keeps the bot running even if it encounters temporary network errors
     bot.infinity_polling()
